@@ -273,9 +273,9 @@ void zcfoundroutine(void);
 //=============================  Defaults =============================
 //===========================================================================
 
-uint8_t drive_by_rpm = 0;
-uint32_t MAXIMUM_RPM_SPEED_CONTROL = 10000;
-uint32_t MINIMUM_RPM_SPEED_CONTROL = 1000;
+uint8_t drive_by_rpm = 1;
+uint32_t MAXIMUM_RPM_SPEED_CONTROL = 14000;
+uint32_t MINIMUM_RPM_SPEED_CONTROL = 6000;
 
 // assign speed control PID values values are x10000
 fastPID speedPid = { // commutation speed loop time
