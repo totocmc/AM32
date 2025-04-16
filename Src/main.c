@@ -281,7 +281,7 @@ uint32_t MINIMUM_RPM_SPEED_CONTROL = DEFAULT_MINIMUM_RPM_SPEED_CONTROL;
 
 // assign speed control PID values values are x10000
 fastPID speedPid = { // commutation speed loop time
-    .Kp = 10,
+    .Kp = 100,
     .Ki = 0,
     .Kd = 100,
     .integral_limit = 10000,
@@ -367,7 +367,7 @@ char crawler_mode = 0; // no longer used //
 uint16_t velocity_count = 0;
 uint16_t velocity_count_threshold = 75;
 
-char low_rpm_throttle_limit = 1;
+char low_rpm_throttle_limit = 0;
 
 uint16_t low_voltage_count = 0;
 uint16_t telem_ms_count;
@@ -739,7 +739,7 @@ void loadEEpromSettings()
         high_rpm_level = motor_kv / 12 / (32 / eepromBuffer.motor_poles);				
     }
 
-    if(eepromBuffer.eeprom_version > 1) {
+    /*if(eepromBuffer.eeprom_version > 1) {
         if(MINIMUM_RPM_SPEED_CONTROL >= MAXIMUM_RPM_SPEED_CONTROL) {
             MINIMUM_RPM_SPEED_CONTROL = DEFAULT_MINIMUM_RPM_SPEED_CONTROL;
             MAXIMUM_RPM_SPEED_CONTROL = DEFAULT_MAXIMUM_RPM_SPEED_CONTROL;
@@ -748,7 +748,7 @@ void loadEEpromSettings()
             MAXIMUM_RPM_SPEED_CONTROL = (eepromBuffer.vcc.max_rpm[1] << 8) | eepromBuffer.vcc.max_rpm[0];
         }
 
-    }
+    }*/
 
     reverse_speed_threshold = map(motor_kv, 300, 3000, 1000, 500);
 }
