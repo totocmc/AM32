@@ -281,7 +281,7 @@ uint32_t MINIMUM_RPM_SPEED_CONTROL = DEFAULT_MINIMUM_RPM_SPEED_CONTROL;
 
 // assign speed control PID values values are x10000
 fastPID speedPid = { // commutation speed loop time
-    .Kp = 100,
+    .Kp = 200,
     .Ki = 0,
     .Kd = 100,
     .integral_limit = 10000,
