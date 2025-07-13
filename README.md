@@ -24,6 +24,11 @@ Select the build target from the drop down box and build project
 ```bash
 make arm_sdk_install                                                                          ─╯
 make FREELYRC_F421
+make FLYCOLOR_G071
+make AORC_K_A_F421
+make TEKKO32_F421
+
+make clean && make TEKKO32_F421 && make AORC_K_A_F421 && make FLYCOLOR_G071 && make FREELYRC_F421
 ```
 ## Firmware Release & Configuration Tool
 
