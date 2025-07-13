@@ -67,8 +67,13 @@ typedef union EEprom_u {
             uint8_t term_enable; // 183
             uint8_t reserved[8]; // 184-191
         } can;
+        struct {
+            uint8_t min_rpm; // 192 val = x*100
+            uint8_t max_rpm; // 193 val = x*100
+            uint8_t reserved[54]; // 194-247
+        } vcc;
     };
-    uint8_t buffer[192];
+    uint8_t buffer[248];
 } EEprom_t;
 
 extern EEprom_t eepromBuffer;

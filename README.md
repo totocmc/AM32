@@ -21,6 +21,15 @@ AM32 has the following features:
 Download and install Keil community edition. Open the Keil project for the mcu you want in the "Keil projects" folder. Install any mcu packs if prompted. 
 Select the build target from the drop down box and build project 
 
+```bash
+make arm_sdk_install                                                                          ─╯
+make FREELYRC_F421
+make FLYCOLOR_G071
+make AORC_K_A_F421
+make TEKKO32_F421
+
+make clean && make TEKKO32_F421 && make AORC_K_A_F421 && make FLYCOLOR_G071 && make FREELYRC_F421
+```
 ## Firmware Release & Configuration Tool
 
 The latest release of the firmware can be found [here](https://am32.ca/downloads).
