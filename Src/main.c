@@ -253,7 +253,7 @@ void zcfoundroutine(void);
 // firmware build options !! fixed speed and duty cycle modes are not to be used
 // with sinusoidal startup !!
 
-//#define FIXED_DUTY_MODE  // bypasses signal input and arming, uses a set duty
+#define FIXED_DUTY_MODE  // bypasses signal input and arming, uses a set duty
 // cycle. For pumps, slot cars etc 
 //#define FIXED_DUTY_MODE_POWER 100     //
 // 0-100 percent not used in fixed speed mode
@@ -277,12 +277,21 @@ uint8_t drive_by_rpm = 1;
 //== VCC section
 #define DEFAULT_MAXIMUM_RPM_SPEED_CONTROL   10000;
 #define DEFAULT_MINIMUM_RPM_SPEED_CONTROL   5000;
+typedef enum
+{
+    INIT = 0,
+    WAIT_LANDED,
+    FLIGHT,
+    LANDED
+}e_VCC_state_timer;
+e_VCC_state_timer fsm_vcc = INIT;
 uint32_t MAXIMUM_RPM_SPEED_CONTROL;// = DEFAULT_MAXIMUM_RPM_SPEED_CONTROL;
 uint32_t MINIMUM_RPM_SPEED_CONTROL;// = DEFAULT_MINIMUM_RPM_SPEED_CONTROL;
 uint16_t flight_time = 30;//Second
 uint16_t landed_wait = 10;//Second
 uint16_t one_hz_counter = 0;
 uint16_t vcc_timer_hz_counter = 0;
+uint8_t speed_target = 0;
 
 // assign speed control PID values values are x10000
 fastPID speedPid = { // commutation speed loop time
@@ -1051,7 +1060,8 @@ void setInput()
 #endif
     } else {
 #ifdef FIXED_DUTY_MODE
-        input = FIXED_DUTY_MODE_POWER * 20 + 47;
+        //input = FIXED_DUTY_MODE_POWER * 20 + 47; //AM32 original
+        input = speed_target * 20 + 47; //VCC standalone mode
 #else
         if (eepromBuffer.use_sine_start) {
             if (adjusted_input < 30) { // dead band ?
@@ -1806,6 +1816,37 @@ int main(void)
 #endif
 
     while (1) {
+        switch(fsm_vcc)
+        {
+            case INIT:
+                speed_target = 0;
+                fsm_vcc = WAIT_LANDED;
+            break;
+
+            case WAIT_LANDED:
+                if(vcc_timer_hz_counter >= landed_wait)
+                {
+                    speed_target = 50;
+                    fsm_vcc = FLIGHT;
+                }
+            break;
+
+            case FLIGHT:
+                if(vcc_timer_hz_counter >= flight_time)
+                {
+                    speed_target = 0;
+                    fsm_vcc = LANDED;
+                }
+            break;
+
+            case LANDED:
+                speed_target = 0;
+                armed = 0;
+            break;
+
+            default:
+            break;
+        }
 
 e_com_time = ((commutation_intervals[0] + commutation_intervals[1] + commutation_intervals[2] + commutation_intervals[3] + commutation_intervals[4] + commutation_intervals[5]) + 4) >> 1; // COMMUTATION INTERVAL IS 0.5US INCREMENTS
 #if defined(FIXED_DUTY_MODE) || defined(FIXED_SPEED_MODE)
