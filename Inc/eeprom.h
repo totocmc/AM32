@@ -62,7 +62,9 @@ typedef union EEprom_u {
         struct {
             uint8_t min_rpm; // 192 val = x*100
             uint8_t max_rpm; // 193 val = x*100
-            uint8_t reserved[54]; // 194-247
+            uint16_t flight_time; // 194-195 val = x sec
+            uint8_t landed_wait; // 196 val = x sec
+            uint8_t reserved[51]; // 197-247
         } vcc;
     };
     uint8_t buffer[248];

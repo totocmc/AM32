@@ -274,10 +274,15 @@ void zcfoundroutine(void);
 //===========================================================================
 
 uint8_t drive_by_rpm = 1;
+//== VCC section
 #define DEFAULT_MAXIMUM_RPM_SPEED_CONTROL   10000;
 #define DEFAULT_MINIMUM_RPM_SPEED_CONTROL   5000;
 uint32_t MAXIMUM_RPM_SPEED_CONTROL;// = DEFAULT_MAXIMUM_RPM_SPEED_CONTROL;
 uint32_t MINIMUM_RPM_SPEED_CONTROL;// = DEFAULT_MINIMUM_RPM_SPEED_CONTROL;
+uint16_t flight_time = 30;//Second
+uint16_t landed_wait = 10;//Second
+uint16_t one_hz_counter = 0;
+uint16_t vcc_timer_hz_counter = 0;
 
 // assign speed control PID values values are x10000
 fastPID speedPid = { // commutation speed loop time
@@ -742,6 +747,8 @@ void loadEEpromSettings()
     if(eepromBuffer.eeprom_version >= 2) {        
         MINIMUM_RPM_SPEED_CONTROL = eepromBuffer.vcc.min_rpm * 100;
         MAXIMUM_RPM_SPEED_CONTROL = eepromBuffer.vcc.max_rpm * 100;
+        flight_time = eepromBuffer.vcc.flight_time;
+        landed_wait = eepromBuffer.vcc.landed_wait;
        
     } else {
         MINIMUM_RPM_SPEED_CONTROL = DEFAULT_MINIMUM_RPM_SPEED_CONTROL;
@@ -1237,6 +1244,15 @@ void tenKhzRoutine()
     tenkhzcounter++;
     ledcounter++;
     one_khz_loop_counter++;
+    one_hz_counter++;
+
+    //used to time vcc standalone function
+    if(one_hz_counter >= LOOP_FREQUENCY_HZ)
+    {
+        one_hz_counter = 0;
+        vcc_timer_hz_counter++;
+    }
+
     if (!armed) {
         if (cell_count == 0) {
             if (inputSet) {
