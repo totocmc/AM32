@@ -1948,8 +1948,7 @@ int main(void) {
       break;
     }
 
-    adjusted_input = speed_target * 20 + 48;
-    // input = speed_target * 20 + 48;
+    input = speed_target * 20 + 47;
 
     e_com_time = ((commutation_intervals[0] + commutation_intervals[1] +
                    commutation_intervals[2] + commutation_intervals[3] +
