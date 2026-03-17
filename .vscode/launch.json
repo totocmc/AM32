@@ -13,17 +13,16 @@
         "enabled": true,
         "samplesPerSecond": 4,
       },
+      "svdFile": "${workspaceFolder}/obj/debug.svd",
       "request": "launch",
       "type": "cortex-debug",
       "servertype": "openocd",
       "configFiles": [
-        "${workspaceFolder}/tools/linux/openocd/share/openocd/scripts/interface/stlink.cfg",
-        "${workspaceFolder}/tools/linux/openocd/share/openocd/scripts/target/stm32g0x.cfg"        
+        "${workspaceFolder}/obj/openocd.cfg",
       ],
-      "runToEntryPoint": "main",
       "showDevDebugOutput": "none",
       "osx": {
-        "serverpath": "${workspaceFolder}/tools/macos/openocd/bin/openocd",
+        "serverpath": "/opt/homebrew/bin/openocd",
         "armToolchainPath": "${workspaceFolder}/tools/macos/xpack-arm-none-eabi-gcc-10.3.1-2.3/bin"
       },
       "linux": {

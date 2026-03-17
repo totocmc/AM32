@@ -281,7 +281,9 @@ typedef enum
 {
     INIT = 0,
     WAIT_LANDED,
+    ACCEL,
     FLIGHT,
+    DECCEL,
     LANDED
 }e_VCC_state_timer;
 e_VCC_state_timer fsm_vcc = INIT;
@@ -289,8 +291,9 @@ uint32_t MAXIMUM_RPM_SPEED_CONTROL;// = DEFAULT_MAXIMUM_RPM_SPEED_CONTROL;
 uint32_t MINIMUM_RPM_SPEED_CONTROL;// = DEFAULT_MINIMUM_RPM_SPEED_CONTROL;
 uint16_t flight_time = 30;//Second
 uint16_t landed_wait = 10;//Second
-uint16_t one_hz_counter = 0;
-uint16_t vcc_timer_hz_counter = 0;
+volatile uint16_t one_hz_counter = 0;
+volatile uint16_t vcc_timer_hz_counter = 0;
+uint32_t sample_accel_deccel = 0;
 uint8_t speed_target = 0;
 
 // assign speed control PID values values are x10000
@@ -756,8 +759,8 @@ void loadEEpromSettings()
     if(eepromBuffer.eeprom_version >= 2) {        
         MINIMUM_RPM_SPEED_CONTROL = eepromBuffer.vcc.min_rpm * 100;
         MAXIMUM_RPM_SPEED_CONTROL = eepromBuffer.vcc.max_rpm * 100;
-        flight_time = eepromBuffer.vcc.flight_time;
-        landed_wait = eepromBuffer.vcc.landed_wait;
+        //flight_time = eepromBuffer.vcc.flight_time;
+        //landed_wait = eepromBuffer.vcc.landed_wait;
        
     } else {
         MINIMUM_RPM_SPEED_CONTROL = DEFAULT_MINIMUM_RPM_SPEED_CONTROL;
@@ -1820,21 +1823,65 @@ int main(void)
         {
             case INIT:
                 speed_target = 0;
+                armed = 1;
+                sample_accel_deccel = 0;
                 fsm_vcc = WAIT_LANDED;
             break;
 
             case WAIT_LANDED:
                 if(vcc_timer_hz_counter >= landed_wait)
                 {
-                    speed_target = 50;
+                    //speed_target = 50;
+                    fsm_vcc = ACCEL;
+                }
+            break;
+
+            case ACCEL:
+                if(speed_target >= 30)
+                {
                     fsm_vcc = FLIGHT;
+                }
+                else
+                {
+                    if(sample_accel_deccel >= 20000)
+                    {
+                        sample_accel_deccel = 0;
+                        speed_target++;
+                    }
+                    else
+                    {
+                        sample_accel_deccel++;
+                    }
                 }
             break;
 
             case FLIGHT:
                 if(vcc_timer_hz_counter >= flight_time)
                 {
+                    fsm_vcc = DECCEL;
+                }
+            break;
+
+            case DECCEL:
+                if(speed_target <= 5)
+                {
                     speed_target = 0;
+                }
+                else
+                {
+                    if(sample_accel_deccel >= 2000000)
+                    {
+                        sample_accel_deccel = 0;
+                        speed_target--;
+                    }
+                    else
+                    {
+                        sample_accel_deccel++;
+                    }
+                }
+
+                if(speed_target == 0)
+                {
                     fsm_vcc = LANDED;
                 }
             break;
