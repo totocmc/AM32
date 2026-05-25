@@ -1964,14 +1964,27 @@ int main(void) {
       break;
     }
 
+#ifdef VCC_MODE
+    {
+      uint16_t vcc_stick = (uint16_t)speed_target * 20U + 47U;
+      newinput = vcc_stick;
+      adjusted_input = vcc_stick;
+      /* drive_by_rpm: setInput() maps stick -> target_e_com_time and runs PID
+       * into input; do not overwrite input here. */
+      if (!use_speed_control_loop || !drive_by_rpm) {
+        input = vcc_stick;
+      }
+    }
+#else
     input = speed_target * 20 + 47;
+#endif
 
     e_com_time = ((commutation_intervals[0] + commutation_intervals[1] +
                    commutation_intervals[2] + commutation_intervals[3] +
                    commutation_intervals[4] + commutation_intervals[5]) +
                   4) >>
                  1; // COMMUTATION INTERVAL IS 0.5US INCREMENTS
-#if defined(FIXED_DUTY_MODE) || defined(FIXED_SPEED_MODE)
+#if defined(FIXED_DUTY_MODE) || defined(FIXED_SPEED_MODE) || defined(VCC_MODE)
     setInput();
 #endif
 
