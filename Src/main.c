@@ -298,6 +298,11 @@ volatile uint16_t one_hz_counter = 0;
 volatile uint16_t vcc_timer_hz_counter = 0;
 /** VCC ramp: throttle % added/removed per second during ACCEL / DECCEL (min 1). */
 uint16_t accel_deccel_step = 4;
+/** Soft-start for drive_by_rpm: seconds to slew target from floor RPM to stick. */
+uint8_t vcc_softstart_sec = 3;
+/** Starting RPM for soft-start (same units as in 60000000/RPM/(poles/2)). */
+uint16_t vcc_softstart_floor_rpm = 300;
+volatile uint8_t vcc_softstart_tick = 0;
 uint8_t speed_target = 0;
 
 // assign speed control PID values values are x10000
@@ -1324,6 +1329,12 @@ void tenKhzRoutine() { // 20khz as of 2.00 to be renamed
           speed_target = (uint8_t)(speed_target - step);
         }
       }
+      if (use_speed_control_loop && drive_by_rpm && fsm_vcc == ACCEL) {
+        uint8_t ssl = vcc_softstart_sec ? vcc_softstart_sec : 1U;
+        if (vcc_softstart_tick < ssl) {
+          vcc_softstart_tick++;
+        }
+      }
     }
 #endif
   }
@@ -1923,12 +1934,14 @@ int main(void) {
       speed_target = 0;
       armed = 0;
       vcc_timer_hz_counter = 0;
+      vcc_softstart_tick = 0;
       fsm_vcc = WAIT_LANDED;
       break;
 
     case WAIT_LANDED:
       if (vcc_timer_hz_counter >= landed_wait_param) {
         vcc_timer_hz_counter = 0;
+        vcc_softstart_tick = 0;
         // speed_target = 50;
         fsm_vcc = ACCEL;
       }
@@ -1986,6 +1999,33 @@ int main(void) {
                  1; // COMMUTATION INTERVAL IS 0.5US INCREMENTS
 #if defined(FIXED_DUTY_MODE) || defined(FIXED_SPEED_MODE) || defined(VCC_MODE)
     setInput();
+#endif
+#ifdef VCC_MODE
+    /* Soft-start: ramp target_e_com_time from a low-RPM floor toward PID demand
+     * so MIN_RPM (e.g. 5000) does not hit the motor instantly at ACCEL start. */
+    if (use_speed_control_loop && drive_by_rpm && fsm_vcc == ACCEL) {
+      uint8_t ssl = vcc_softstart_sec ? vcc_softstart_sec : 1U;
+      if (vcc_softstart_tick < ssl) {
+        uint32_t num = (uint32_t)vcc_softstart_tick;
+        uint32_t den = (uint32_t)ssl;
+        uint16_t commanded = target_e_com_time;
+        uint32_t pole_half = (uint32_t)(eepromBuffer.motor_poles / 2U);
+        if (pole_half == 0U) {
+          pole_half = 1U;
+        }
+        uint32_t frpm =
+            vcc_softstart_floor_rpm ? (uint32_t)vcc_softstart_floor_rpm : 200U;
+        uint32_t floor_u = 60000000UL / frpm / pole_half;
+        if (floor_u > 65535UL) {
+          floor_u = 65535UL;
+        }
+        uint16_t floor_ecom = (uint16_t)floor_u;
+        if (den > 0U && floor_ecom > commanded) {
+          uint32_t delta = (uint32_t)floor_ecom - (uint32_t)commanded;
+          target_e_com_time = (uint16_t)(floor_ecom - (delta * num) / den);
+        }
+      }
+    }
 #endif
 
 #ifdef NEED_INPUT_READY
