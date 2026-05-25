@@ -782,9 +782,37 @@ void loadEEpromSettings() {
   if (eepromBuffer.eeprom_version >= 2) {
     MINIMUM_RPM_SPEED_CONTROL = eepromBuffer.vcc.min_rpm * 100;
     MAXIMUM_RPM_SPEED_CONTROL = eepromBuffer.vcc.max_rpm * 100;
-    // flight_time_param = eepromBuffer.vcc.flight_time;
-    // landed_wait_param = eepromBuffer.vcc.landed_wait;
-    // speed_target_param = eepromBuffer.vcc.speed_target;
+    flight_time_param = eepromBuffer.vcc.flight_time;
+    if (flight_time_param == 0 || flight_time_param > 3600) {
+      flight_time_param = 20;
+    }
+    landed_wait_param = eepromBuffer.vcc.landed_wait;
+    if (landed_wait_param > 120) {
+      landed_wait_param = 5;
+    }
+    speed_target_param = eepromBuffer.vcc.speed_target;
+    if (speed_target_param == 0 || speed_target_param > 100) {
+      speed_target_param = 30;
+    }
+
+    if (eepromBuffer.eeprom_version >= 4) {
+      vcc_softstart_floor_rpm = eepromBuffer.vcc.softstart_floor_rpm;
+      if (vcc_softstart_floor_rpm < 50 || vcc_softstart_floor_rpm > 20000) {
+        vcc_softstart_floor_rpm = 300;
+      }
+      vcc_softstart_sec = eepromBuffer.vcc.softstart_sec;
+      if (vcc_softstart_sec == 0 || vcc_softstart_sec > 60) {
+        vcc_softstart_sec = 3;
+      }
+      accel_deccel_step = eepromBuffer.vcc.accel_pct_per_sec;
+      if (accel_deccel_step == 0 || accel_deccel_step > 100) {
+        accel_deccel_step = 4;
+      }
+    } else {
+      vcc_softstart_floor_rpm = 300;
+      vcc_softstart_sec = 3;
+      accel_deccel_step = 4;
+    }
 
   } else {
     MINIMUM_RPM_SPEED_CONTROL = DEFAULT_MINIMUM_RPM_SPEED_CONTROL;
@@ -1786,6 +1814,11 @@ int main(void) {
       strlen(FIRMWARE_NAME) > i
           ? eepromBuffer.firmware_name[i] = (uint8_t)FIRMWARE_NAME[i]
           : 0;
+    }
+    if (eeprom_layout_version >= 4 && eepromBuffer.eeprom_version < 4) {
+      eepromBuffer.vcc.softstart_floor_rpm = 300;
+      eepromBuffer.vcc.softstart_sec = 3;
+      eepromBuffer.vcc.accel_pct_per_sec = 4;
     }
     saveEEpromSettings();
   }

@@ -65,7 +65,10 @@ typedef union EEprom_u {
             uint16_t flight_time; // 194-195 val = x sec
             uint8_t landed_wait; // 196 val = x sec
             uint8_t speed_target; // 197 val = x %
-            uint8_t reserved[50]; // 198-247
+            uint16_t softstart_floor_rpm; // 198-199 same RPM units as min/max path
+            uint8_t softstart_sec; // 200 soft-start ramp duration (s), 1–60
+            uint8_t accel_pct_per_sec; // 201 VCC throttle ramp %/s (1–100)
+            uint8_t reserved[46]; // 202-247
         } vcc;
     };
     uint8_t buffer[248];
