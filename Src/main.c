@@ -296,8 +296,8 @@ uint16_t landed_wait_param = 5;     // Second
 uint8_t speed_target_param = 30;    // Percent
 volatile uint16_t one_hz_counter = 0;
 volatile uint16_t vcc_timer_hz_counter = 0;
-uint32_t sample_accel_deccel = 0;
-uint16_t accel_deccel_step = 4; // val in %/s2
+/** VCC ramp: throttle % added/removed per second during ACCEL / DECCEL (min 1). */
+uint16_t accel_deccel_step = 4;
 uint8_t speed_target = 0;
 
 // assign speed control PID values values are x10000
@@ -1310,9 +1310,32 @@ void tenKhzRoutine() { // 20khz as of 2.00 to be renamed
   if (one_hz_counter >= LOOP_FREQUENCY_HZ) {
     one_hz_counter = 0;
     vcc_timer_hz_counter++;
+#ifdef VCC_MODE
+    {
+      uint8_t step = (uint8_t)(accel_deccel_step ? accel_deccel_step : 1U);
+      if (fsm_vcc == ACCEL && speed_target < speed_target_param) {
+        uint16_t next = (uint16_t)speed_target + step;
+        speed_target =
+            (next >= speed_target_param) ? speed_target_param : (uint8_t)next;
+      } else if (fsm_vcc == DECCEL && speed_target > 5) {
+        if (speed_target <= (uint8_t)(step + 5U)) {
+          speed_target = 5;
+        } else {
+          speed_target = (uint8_t)(speed_target - step);
+        }
+      }
+    }
+#endif
   }
 
   if (!armed) {
+#ifdef VCC_MODE
+    /* Normal arming needs PWM/DShot idle counting; arm while waiting or flying. */
+    if (fsm_vcc == WAIT_LANDED || fsm_vcc == ACCEL || fsm_vcc == FLIGHT ||
+        fsm_vcc == DECCEL) {
+      armed = 1;
+    }
+#endif
     if (cell_count == 0) {
       if (inputSet) {
         if (adjusted_input == 0) {
@@ -1852,6 +1875,12 @@ int main(void) {
   inputSet = 1;
 
 #else
+#ifdef VCC_MODE
+  /* No RC wire: still satisfy input path as "stick low" so arming can proceed. */
+  inputSet = 1;
+  adjusted_input = 0;
+  newinput = 48;
+#endif
   // checkForHighSignal();     // will reboot if signal line is high for 10ms
 
   receiveDshotDma();
@@ -1892,8 +1921,7 @@ int main(void) {
     switch (fsm_vcc) {
     case INIT:
       speed_target = 0;
-      armed = 1;
-      sample_accel_deccel = 0;
+      armed = 0;
       vcc_timer_hz_counter = 0;
       fsm_vcc = WAIT_LANDED;
       break;
@@ -1908,14 +1936,9 @@ int main(void) {
 
     case ACCEL:
       if (speed_target >= speed_target_param) {
+        /* flight_time_param counts cruise only, not wait or ramp-up */
+        vcc_timer_hz_counter = 0;
         fsm_vcc = FLIGHT;
-      } else {
-        if (sample_accel_deccel >= 10000) {
-          sample_accel_deccel = 0;
-          speed_target++;
-        } else {
-          sample_accel_deccel++;
-        }
       }
       break;
 
@@ -1929,13 +1952,6 @@ int main(void) {
       if (speed_target <= 5) {
         speed_target = 0;
         fsm_vcc = LANDED;
-      } else {
-        if (sample_accel_deccel >= 10000) {
-          sample_accel_deccel = 0;
-          speed_target--;
-        } else {
-          sample_accel_deccel++;
-        }
       }
       break;
 
