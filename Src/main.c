@@ -787,7 +787,7 @@ void loadEEpromSettings() {
       flight_time_param = 20;
     }
     landed_wait_param = eepromBuffer.vcc.landed_wait;
-    if (landed_wait_param > 120) {
+    if (landed_wait_param == 0 || landed_wait_param > 120) {
       landed_wait_param = 5;
     }
     speed_target_param = eepromBuffer.vcc.speed_target;
@@ -1350,9 +1350,9 @@ void tenKhzRoutine() { // 20khz as of 2.00 to be renamed
         uint16_t next = (uint16_t)speed_target + step;
         speed_target =
             (next >= speed_target_param) ? speed_target_param : (uint8_t)next;
-      } else if (fsm_vcc == DECCEL && speed_target > 5) {
-        if (speed_target <= (uint8_t)(step + 5U)) {
-          speed_target = 5;
+      } else if (fsm_vcc == DECCEL && speed_target > 0) {
+        if (speed_target <= step) {
+          speed_target = 0;
         } else {
           speed_target = (uint8_t)(speed_target - step);
         }
@@ -1369,9 +1369,8 @@ void tenKhzRoutine() { // 20khz as of 2.00 to be renamed
 
   if (!armed) {
 #ifdef VCC_MODE
-    /* Normal arming needs PWM/DShot idle counting; arm while waiting or flying. */
-    if (fsm_vcc == WAIT_LANDED || fsm_vcc == ACCEL || fsm_vcc == FLIGHT ||
-        fsm_vcc == DECCEL) {
+    /* Arm only when actually flying; stay disarmed during pre-start wait. */
+    if (fsm_vcc == ACCEL || fsm_vcc == FLIGHT || fsm_vcc == DECCEL) {
       armed = 1;
     }
 #endif
@@ -1793,6 +1792,25 @@ static void checkDeviceInfo(void) {
   // TODO: check pin code and reboot to bootloader if incorrect
 }
 
+#ifdef VCC_MODE
+static void vcc_force_motor_off(void) {
+  newinput = 0;
+  adjusted_input = 0;
+  input = 0;
+  speedPid.error = 0;
+  input_override = 0;
+  duty_cycle_setpoint = 0;
+  duty_cycle = 0;
+  if (running) {
+    allOff();
+    maskPhaseInterrupts();
+    running = 0;
+    zero_crosses = 0;
+  }
+  SET_DUTY_CYCLE_ALL(0);
+}
+#endif
+
 int main(void) {
 
   initAfterJump();
@@ -1972,10 +1990,12 @@ int main(void) {
       break;
 
     case WAIT_LANDED:
+      armed = 0;
+      speed_target = 0;
       if (vcc_timer_hz_counter >= landed_wait_param) {
         vcc_timer_hz_counter = 0;
         vcc_softstart_tick = 0;
-        // speed_target = 50;
+        armed = 1;
         fsm_vcc = ACCEL;
       }
       break;
@@ -1995,8 +2015,8 @@ int main(void) {
       break;
 
     case DECCEL:
-      if (speed_target <= 5) {
-        speed_target = 0;
+      if (speed_target == 0) {
+        armed = 0;
         fsm_vcc = LANDED;
       }
       break;
@@ -2012,13 +2032,22 @@ int main(void) {
 
 #ifdef VCC_MODE
     {
-      uint16_t vcc_stick = (uint16_t)speed_target * 20U + 47U;
-      newinput = vcc_stick;
-      adjusted_input = vcc_stick;
-      /* drive_by_rpm: setInput() maps stick -> target_e_com_time and runs PID
-       * into input; do not overwrite input here. */
-      if (!use_speed_control_loop || !drive_by_rpm) {
-        input = vcc_stick;
+      if (fsm_vcc == WAIT_LANDED || fsm_vcc == LANDED) {
+        /* Stick at 47 still maps to MIN_RPM in drive_by_rpm; force true idle. */
+        newinput = 0;
+        adjusted_input = 0;
+        input = 0;
+        speedPid.error = 0;
+        input_override = 0;
+      } else {
+        uint16_t vcc_stick = (uint16_t)speed_target * 20U + 47U;
+        newinput = vcc_stick;
+        adjusted_input = vcc_stick;
+        /* drive_by_rpm: setInput() maps stick -> target_e_com_time and runs PID
+         * into input; do not overwrite input here. */
+        if (!use_speed_control_loop || !drive_by_rpm) {
+          input = vcc_stick;
+        }
       }
     }
 #else
@@ -2034,6 +2063,9 @@ int main(void) {
     setInput();
 #endif
 #ifdef VCC_MODE
+    if (fsm_vcc == WAIT_LANDED || fsm_vcc == LANDED) {
+      vcc_force_motor_off();
+    }
     /* Soft-start: ramp target_e_com_time from a low-RPM floor toward PID demand
      * so MIN_RPM (e.g. 5000) does not hit the motor instantly at ACCEL start. */
     if (use_speed_control_loop && drive_by_rpm && fsm_vcc == ACCEL) {
