@@ -292,17 +292,16 @@ e_VCC_state_timer fsm_vcc = INIT;
 uint32_t MAXIMUM_RPM_SPEED_CONTROL; // = DEFAULT_MAXIMUM_RPM_SPEED_CONTROL;
 uint32_t MINIMUM_RPM_SPEED_CONTROL; // = DEFAULT_MINIMUM_RPM_SPEED_CONTROL;
 uint16_t flight_time_param = 20;    // Second
-uint16_t landed_wait_param = 5;     // Second
+uint16_t landed_wait_param = 10;     // Second
 uint8_t speed_target_param = 30;    // Percent
 volatile uint16_t one_hz_counter = 0;
 volatile uint16_t vcc_timer_hz_counter = 0;
 /** VCC ramp: throttle % added/removed per second during ACCEL / DECCEL (min 1). */
-uint16_t accel_deccel_step = 4;
-/** Soft-start for drive_by_rpm: seconds to slew target from floor RPM to stick. */
-uint8_t vcc_softstart_sec = 3;
-/** Starting RPM for soft-start (same units as in 60000000/RPM/(poles/2)). */
-uint16_t vcc_softstart_floor_rpm = 300;
-volatile uint8_t vcc_softstart_tick = 0;
+uint16_t accel_deccel_step = 8;
+/** Soft-start floor RPM (same units as in 60000000/RPM/(poles/2)). */
+uint16_t vcc_softstart_floor_rpm = 800;
+/** Sub-permille speed ramp (permille * 1000); 1 kHz updates during ACCEL/DECCEL. */
+uint32_t vcc_speed_permille_accum = 0;
 uint8_t speed_target = 0;
 
 // assign speed control PID values values are x10000
@@ -788,7 +787,7 @@ void loadEEpromSettings() {
     }
     landed_wait_param = eepromBuffer.vcc.landed_wait;
     if (landed_wait_param == 0 || landed_wait_param > 120) {
-      landed_wait_param = 5;
+      landed_wait_param = 10;
     }
     speed_target_param = eepromBuffer.vcc.speed_target;
     if (speed_target_param == 0 || speed_target_param > 100) {
@@ -798,20 +797,15 @@ void loadEEpromSettings() {
     if (eepromBuffer.eeprom_version >= 4) {
       vcc_softstart_floor_rpm = eepromBuffer.vcc.softstart_floor_rpm;
       if (vcc_softstart_floor_rpm < 50 || vcc_softstart_floor_rpm > 20000) {
-        vcc_softstart_floor_rpm = 300;
-      }
-      vcc_softstart_sec = eepromBuffer.vcc.softstart_sec;
-      if (vcc_softstart_sec == 0 || vcc_softstart_sec > 60) {
-        vcc_softstart_sec = 3;
+        vcc_softstart_floor_rpm = 800;
       }
       accel_deccel_step = eepromBuffer.vcc.accel_pct_per_sec;
       if (accel_deccel_step == 0 || accel_deccel_step > 100) {
-        accel_deccel_step = 4;
+        accel_deccel_step = 8;
       }
     } else {
-      vcc_softstart_floor_rpm = 300;
-      vcc_softstart_sec = 3;
-      accel_deccel_step = 4;
+      vcc_softstart_floor_rpm = 800;
+      accel_deccel_step = 8;
     }
 
   } else {
@@ -1332,6 +1326,10 @@ void setInput() {
 #endif
 }
 
+#ifdef VCC_MODE
+static void vcc_ramp_permille_1khz(void);
+#endif
+
 void tenKhzRoutine() { // 20khz as of 2.00 to be renamed
   duty_cycle = duty_cycle_setpoint;
   tenkhzcounter++;
@@ -1343,28 +1341,6 @@ void tenKhzRoutine() { // 20khz as of 2.00 to be renamed
   if (one_hz_counter >= LOOP_FREQUENCY_HZ) {
     one_hz_counter = 0;
     vcc_timer_hz_counter++;
-#ifdef VCC_MODE
-    {
-      uint8_t step = (uint8_t)(accel_deccel_step ? accel_deccel_step : 1U);
-      if (fsm_vcc == ACCEL && speed_target < speed_target_param) {
-        uint16_t next = (uint16_t)speed_target + step;
-        speed_target =
-            (next >= speed_target_param) ? speed_target_param : (uint8_t)next;
-      } else if (fsm_vcc == DECCEL && speed_target > 0) {
-        if (speed_target <= step) {
-          speed_target = 0;
-        } else {
-          speed_target = (uint8_t)(speed_target - step);
-        }
-      }
-      if (use_speed_control_loop && drive_by_rpm && fsm_vcc == ACCEL) {
-        uint8_t ssl = vcc_softstart_sec ? vcc_softstart_sec : 1U;
-        if (vcc_softstart_tick < ssl) {
-          vcc_softstart_tick++;
-        }
-      }
-    }
-#endif
   }
 
   if (!armed) {
@@ -1460,6 +1436,11 @@ void tenKhzRoutine() { // 20khz as of 2.00 to be renamed
 #endif
     if (one_khz_loop_counter > PID_LOOP_DIVIDER) { // 1khz PID loop
       one_khz_loop_counter = 0;
+#ifdef VCC_MODE
+      if (fsm_vcc == ACCEL || fsm_vcc == DECCEL) {
+        vcc_ramp_permille_1khz();
+      }
+#endif
       if (use_current_limit && running) {
         use_current_limit_adjust -=
             (int16_t)(doPidCalculations(&currentPid, actual_current,
@@ -1793,6 +1774,125 @@ static void checkDeviceInfo(void) {
 }
 
 #ifdef VCC_MODE
+static uint16_t vcc_speed_permille(void) {
+  return (uint16_t)(vcc_speed_permille_accum / 1000U);
+}
+
+static void vcc_sync_speed_target(void) {
+  uint16_t pm = vcc_speed_permille();
+  uint16_t cap_pm = (uint16_t)speed_target_param * 10U;
+  if (cap_pm > 0U && pm > cap_pm) {
+    pm = cap_pm;
+  }
+  speed_target = (uint8_t)(pm / 10U);
+  if (speed_target > speed_target_param) {
+    speed_target = speed_target_param;
+  }
+}
+
+static uint16_t vcc_stick_from_permille(void) {
+  uint16_t pm = vcc_speed_permille();
+  uint32_t cap = (uint32_t)speed_target_param * 10U;
+  if (pm == 0U || cap == 0U || speed_target_param == 0U) {
+    return 0U;
+  }
+  if (pm > cap) {
+    pm = (uint16_t)cap;
+  }
+  /* Cruise stick = speed_target_param % of throttle span, not 100 %. */
+  uint32_t cruise_stick =
+      47U + ((uint32_t)speed_target_param * (2047U - 47U) / 100U);
+  if (cruise_stick <= 47U) {
+    return 0U;
+  }
+  return (uint16_t)(47U + ((uint32_t)pm * (cruise_stick - 47U)) / cap);
+}
+
+static uint32_t vcc_effective_floor_rpm(void) {
+  uint32_t floor =
+      vcc_softstart_floor_rpm ? (uint32_t)vcc_softstart_floor_rpm : 800U;
+  /* Never start below ~20 % of configured MIN_RPM (avoids very sluggish starts). */
+  uint32_t min_floor = MINIMUM_RPM_SPEED_CONTROL / 5U;
+  if (min_floor < 400U) {
+    min_floor = 400U;
+  }
+  if (floor < min_floor) {
+    floor = min_floor;
+  }
+  if (floor > 20000U) {
+    floor = 20000U;
+  }
+  return floor;
+}
+
+static uint16_t vcc_floor_ecom_time(void) {
+  uint32_t pole_half = (uint32_t)(eepromBuffer.motor_poles / 2U);
+  if (pole_half == 0U) {
+    pole_half = 1U;
+  }
+  uint32_t frpm = vcc_effective_floor_rpm();
+  uint32_t floor_u = 60000000UL / frpm / pole_half;
+  if (floor_u > 65535UL) {
+    floor_u = 65535UL;
+  }
+  return (uint16_t)floor_u;
+}
+
+static void vcc_apply_rpm_ramp_target(uint16_t commanded, uint8_t decel) {
+  uint32_t cap = (uint32_t)speed_target_param * 10U;
+  uint32_t pm = vcc_speed_permille();
+  if (cap == 0U || pm == 0U) {
+    return;
+  }
+  if (pm > cap) {
+    pm = cap;
+  }
+  uint16_t floor_ecom = vcc_floor_ecom_time();
+  if (floor_ecom <= commanded) {
+    target_e_com_time = commanded;
+    return;
+  }
+  uint32_t delta = (uint32_t)floor_ecom - (uint32_t)commanded;
+  uint32_t blend = pm + (cap / 6U);
+  if (blend > cap) {
+    blend = cap;
+  }
+  if (!decel) {
+    target_e_com_time = (uint16_t)(floor_ecom - (delta * blend) / cap);
+  } else {
+    /* Symmetric decel: cruise at full pm, ease toward floor as pm falls. */
+    target_e_com_time =
+        (uint16_t)(commanded + (delta * (cap - blend)) / cap);
+  }
+}
+
+static void vcc_ramp_permille_1khz(void) {
+  uint32_t step = (uint32_t)(accel_deccel_step ? accel_deccel_step : 1U) * 10U;
+  uint32_t cap = (uint32_t)speed_target_param * 10000U;
+  if (fsm_vcc == ACCEL) {
+    if (vcc_speed_permille_accum + step < cap) {
+      vcc_speed_permille_accum += step;
+    } else {
+      vcc_speed_permille_accum = cap;
+    }
+  } else if (fsm_vcc == DECCEL) {
+    if (vcc_speed_permille_accum > step) {
+      vcc_speed_permille_accum -= step;
+    } else {
+      vcc_speed_permille_accum = 0;
+    }
+  }
+  vcc_sync_speed_target();
+}
+
+static void vcc_reset_accel_state(void) {
+  vcc_speed_permille_accum = 0;
+  speed_target = 0;
+  input_override = 0;
+  speedPid.error = 0;
+  speedPid.integral = 0;
+}
+
 static void vcc_force_motor_off(void) {
   newinput = 0;
   adjusted_input = 0;
@@ -1834,9 +1934,8 @@ int main(void) {
           : 0;
     }
     if (eeprom_layout_version >= 4 && eepromBuffer.eeprom_version < 4) {
-      eepromBuffer.vcc.softstart_floor_rpm = 300;
-      eepromBuffer.vcc.softstart_sec = 3;
-      eepromBuffer.vcc.accel_pct_per_sec = 4;
+      eepromBuffer.vcc.softstart_floor_rpm = 800;
+      eepromBuffer.vcc.accel_pct_per_sec = 8;
     }
     saveEEpromSettings();
   }
@@ -1982,26 +2081,33 @@ int main(void) {
   while (1) {
     switch (fsm_vcc) {
     case INIT:
-      speed_target = 0;
       armed = 0;
       vcc_timer_hz_counter = 0;
-      vcc_softstart_tick = 0;
+      vcc_reset_accel_state();
+#ifdef MCU_AT415
+        play_tone_flag = 4;
+#else
+        playInputTune();
+#endif
       fsm_vcc = WAIT_LANDED;
       break;
 
     case WAIT_LANDED:
       armed = 0;
       speed_target = 0;
+      vcc_speed_permille_accum = 0;
       if (vcc_timer_hz_counter >= landed_wait_param) {
         vcc_timer_hz_counter = 0;
-        vcc_softstart_tick = 0;
+        vcc_reset_accel_state();
         armed = 1;
         fsm_vcc = ACCEL;
       }
       break;
 
     case ACCEL:
-      if (speed_target >= speed_target_param) {
+      if (speed_target_param == 0U ||
+          vcc_speed_permille_accum >=
+              (uint32_t)speed_target_param * 10000U) {
         /* flight_time_param counts cruise only, not wait or ramp-up */
         vcc_timer_hz_counter = 0;
         fsm_vcc = FLIGHT;
@@ -2010,18 +2116,22 @@ int main(void) {
 
     case FLIGHT:
       if (vcc_timer_hz_counter >= flight_time_param) {
+        input_override = 0;
+        speedPid.error = 0;
+        speedPid.integral = 0;
         fsm_vcc = DECCEL;
       }
       break;
 
     case DECCEL:
-      if (speed_target == 0) {
+      if (vcc_speed_permille_accum == 0U) {
         armed = 0;
         fsm_vcc = LANDED;
       }
       break;
 
     case LANDED:
+      vcc_speed_permille_accum = 0;
       speed_target = 0;
       armed = 0;
       break;
@@ -2040,7 +2150,7 @@ int main(void) {
         speedPid.error = 0;
         input_override = 0;
       } else {
-        uint16_t vcc_stick = (uint16_t)speed_target * 20U + 47U;
+        uint16_t vcc_stick = vcc_stick_from_permille();
         newinput = vcc_stick;
         adjusted_input = vcc_stick;
         /* drive_by_rpm: setInput() maps stick -> target_e_com_time and runs PID
@@ -2065,31 +2175,10 @@ int main(void) {
 #ifdef VCC_MODE
     if (fsm_vcc == WAIT_LANDED || fsm_vcc == LANDED) {
       vcc_force_motor_off();
-    }
-    /* Soft-start: ramp target_e_com_time from a low-RPM floor toward PID demand
-     * so MIN_RPM (e.g. 5000) does not hit the motor instantly at ACCEL start. */
-    if (use_speed_control_loop && drive_by_rpm && fsm_vcc == ACCEL) {
-      uint8_t ssl = vcc_softstart_sec ? vcc_softstart_sec : 1U;
-      if (vcc_softstart_tick < ssl) {
-        uint32_t num = (uint32_t)vcc_softstart_tick;
-        uint32_t den = (uint32_t)ssl;
-        uint16_t commanded = target_e_com_time;
-        uint32_t pole_half = (uint32_t)(eepromBuffer.motor_poles / 2U);
-        if (pole_half == 0U) {
-          pole_half = 1U;
-        }
-        uint32_t frpm =
-            vcc_softstart_floor_rpm ? (uint32_t)vcc_softstart_floor_rpm : 200U;
-        uint32_t floor_u = 60000000UL / frpm / pole_half;
-        if (floor_u > 65535UL) {
-          floor_u = 65535UL;
-        }
-        uint16_t floor_ecom = (uint16_t)floor_u;
-        if (den > 0U && floor_ecom > commanded) {
-          uint32_t delta = (uint32_t)floor_ecom - (uint32_t)commanded;
-          target_e_com_time = (uint16_t)(floor_ecom - (delta * num) / den);
-        }
-      }
+    } else if (use_speed_control_loop && drive_by_rpm &&
+               (fsm_vcc == ACCEL || fsm_vcc == DECCEL)) {
+      uint16_t commanded = target_e_com_time;
+      vcc_apply_rpm_ramp_target(commanded, fsm_vcc == DECCEL);
     }
 #endif
 
